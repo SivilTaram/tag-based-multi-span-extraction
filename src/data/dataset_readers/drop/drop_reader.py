@@ -13,18 +13,19 @@ from allennlp.data.instance import Instance
 from allennlp.data.fields import Field, MetadataField
 from tqdm import tqdm
 
-from src.data.dataset_readers.drop.drop_utils import (AnswerType, AnswerAccessor, SPAN_ANSWER_TYPES, 
-                                                      ALL_ANSWER_TYPES, get_answer_type, standardize_dataset, 
+from src.data.dataset_readers.drop.drop_utils import (AnswerType, AnswerAccessor, SPAN_ANSWER_TYPES,
+                                                      ALL_ANSWER_TYPES, get_answer_type, standardize_dataset,
                                                       extract_answer_info_from_annotation)
 from src.data.dataset_readers.utils import standardize_text_simple, standardize_text_advanced
 from src.data.dataset_readers.utils import custom_word_tokenizer, split_tokens_by_hyphen, index_text_to_tokens
 from src.data.dataset_readers.utils import is_pickle_dict_valid, load_pkl, save_pkl
 from src.data.dataset_readers.answer_field_generators.answer_field_generator import AnswerFieldGenerator
-from src.data.dataset_readers.drop.drop_utils import (extract_number_occurrences, clipped_passage_num, 
+from src.data.dataset_readers.drop.drop_utils import (extract_number_occurrences, clipped_passage_num,
                                                       get_number_indices_field)
 from src.data.fields.labels_field import LabelsField
 
 logger = logging.getLogger(__name__)
+
 
 @DatasetReader.register('tbmse_drop')
 class DropReader(DatasetReader):
@@ -35,7 +36,7 @@ class DropReader(DatasetReader):
                  old_reader_behavior: bool,
                  lazy: bool = False,
                  is_training: bool = False,
-                 max_instances = -1,
+                 max_instances=-1,
                  answer_types_filter: List[str] = ALL_ANSWER_TYPES,
                  max_pieces: int = 512,
                  uncased: bool = False,
@@ -53,7 +54,7 @@ class DropReader(DatasetReader):
 
         self._is_training = is_training
         self._max_instances = max_instances
-        
+
         self._answer_types_filter = answer_types_filter
 
         self._max_pieces = max_pieces
@@ -67,7 +68,7 @@ class DropReader(DatasetReader):
             self._pickle['action'] = None
 
         word_tokenizer = custom_word_tokenizer()
-        self._word_tokenize =\
+        self._word_tokenize = \
             lambda text: [token for token in split_tokens_by_hyphen(word_tokenizer.tokenize(text))]
 
     @overrides
@@ -87,7 +88,7 @@ class DropReader(DatasetReader):
                 self._pickle['action'] = 'save'
 
         file_path = cached_path(file_path)
-        with open(file_path, encoding = 'utf8') as dataset_file:
+        with open(file_path, encoding='utf8') as dataset_file:
             dataset = json.load(dataset_file)
 
         dataset = standardize_dataset(dataset, self._standardize_text_func)
@@ -104,7 +105,7 @@ class DropReader(DatasetReader):
             passage_alignment = self._tokenizer.align_tokens_to_tokens(passage_text, passage_words, passage_tokens)
             passage_wordpieces = self._tokenizer.alignment_to_token_wordpieces(passage_alignment)
 
-            number_occurrences_in_passage =\
+            number_occurrences_in_passage = \
                 extract_number_occurrences(number_extraction_tokens, passage_alignment)
 
             # Process questions from this passage
@@ -168,7 +169,8 @@ class DropReader(DatasetReader):
                          answer_type: str = None,
                          instance_index: int = None) -> Optional[Instance]:
         # We alter it, so use a copy to keep it usable for the next questions with the same paragrpah
-        number_occurrences_in_passage = [number_occurrence.copy() for number_occurrence in number_occurrences_in_passage]
+        number_occurrences_in_passage = [number_occurrence.copy() for number_occurrence in
+                                         number_occurrences_in_passage]
 
         # Tokenize question
         question_tokens = self._tokenizer.tokenize_with_offsets(question_text)
@@ -178,32 +180,38 @@ class DropReader(DatasetReader):
         question_wordpieces = self._tokenizer.alignment_to_token_wordpieces(question_alignment)
 
         # Index tokens
-        encoded_inputs = self._tokenizer.encode_plus([token.text for token in question_tokens], [token.text for token in passage_tokens], 
-                                    add_special_tokens=True, max_length=self._max_pieces, 
-                                    truncation_strategy='only_second',
-                                    return_token_type_ids=True,
-                                    return_special_tokens_mask=True)
+        encoded_inputs = self._tokenizer.encode_plus([token.text for token in question_tokens],
+                                                     [token.text for token in passage_tokens],
+                                                     add_special_tokens=True, max_length=self._max_pieces,
+                                                     truncation_strategy='only_second',
+                                                     return_token_type_ids=True,
+                                                     return_special_tokens_mask=True)
         question_passage_token_type_ids = encoded_inputs['token_type_ids']
         question_passage_special_tokens_mask = encoded_inputs['special_tokens_mask']
 
-        question_position = self._tokenizer.get_type_position_in_sequence(0, question_passage_token_type_ids, question_passage_special_tokens_mask)
-        passage_position = self._tokenizer.get_type_position_in_sequence(1, question_passage_token_type_ids, question_passage_special_tokens_mask)
+        question_position = self._tokenizer.get_type_position_in_sequence(0, question_passage_token_type_ids,
+                                                                          question_passage_special_tokens_mask)
+        passage_position = self._tokenizer.get_type_position_in_sequence(1, question_passage_token_type_ids,
+                                                                         question_passage_special_tokens_mask)
         question_passage_tokens, num_of_tokens_per_type = self._tokenizer.convert_to_tokens(encoded_inputs, [
-            {'tokens': question_tokens, 'wordpieces': question_wordpieces, 'position': question_position}, 
+            {'tokens': question_tokens, 'wordpieces': question_wordpieces, 'position': question_position},
             {'tokens': passage_tokens, 'wordpieces': passage_wordpieces, 'position': passage_position}
         ])
 
         # Adjust wordpieces
         question_passage_wordpieces = self._tokenizer.adjust_wordpieces([
-            {'wordpieces': question_wordpieces, 'position': question_position, 'num_of_tokens': num_of_tokens_per_type[0]}, 
+            {'wordpieces': question_wordpieces, 'position': question_position,
+             'num_of_tokens': num_of_tokens_per_type[0]},
             {'wordpieces': passage_wordpieces, 'position': passage_position, 'num_of_tokens': num_of_tokens_per_type[1]}
         ], question_passage_tokens)
 
         # Adjust text index to token index
-        question_text_index_to_token_index = [token_index + question_position for i, token_index in enumerate(question_text_index_to_token_index)
+        question_text_index_to_token_index = [token_index + question_position for i, token_index in
+                                              enumerate(question_text_index_to_token_index)
                                               if token_index < num_of_tokens_per_type[0]]
-        passage_text_index_to_token_index = [token_index + passage_position for i, token_index in enumerate(passage_text_index_to_token_index)
-                                              if token_index < num_of_tokens_per_type[1]]
+        passage_text_index_to_token_index = [token_index + passage_position for i, token_index in
+                                             enumerate(passage_text_index_to_token_index)
+                                             if token_index < num_of_tokens_per_type[1]]
 
         # Truncation-related code
         encoded_passage_tokens_length = num_of_tokens_per_type[1]
@@ -212,7 +220,7 @@ class DropReader(DatasetReader):
                 first_truncated_passage_token = passage_tokens[encoded_passage_tokens_length]
                 max_passage_length = first_truncated_passage_token.idx
                 number_occurrences_in_passage = \
-                                clipped_passage_num(number_occurrences_in_passage, encoded_passage_tokens_length)
+                    clipped_passage_num(number_occurrences_in_passage, encoded_passage_tokens_length)
             else:
                 max_passage_length = -1
         else:
@@ -221,14 +229,13 @@ class DropReader(DatasetReader):
         # update the indices of the numbers with respect to the question.
         for number_occurrence in number_occurrences_in_passage:
             number_occurrence['indices'] = [index + passage_position for index in number_occurrence['indices']]
-        
+
         # hack to guarantee minimal length of padded number
         # according to dataset_readers.reading_comprehension.drop from allennlp)
         number_occurrences_in_passage.append({
             'value': 0,
             'indices': [-1]
         })
-
 
         fields: Dict[str, Field] = {}
 
@@ -246,7 +253,8 @@ class DropReader(DatasetReader):
         # Compile question, passage, answer metadata
         metadata = {'original_passage': passage_text,
                     'original_question': question_text,
-                    'original_numbers': [number_occurrence['value'] for number_occurrence in number_occurrences_in_passage],
+                    'original_numbers': [number_occurrence['value'] for number_occurrence in
+                                         number_occurrences_in_passage],
                     'passage_tokens': passage_tokens,
                     'question_tokens': question_tokens,
                     'question_passage_tokens': question_passage_tokens,
@@ -257,7 +265,7 @@ class DropReader(DatasetReader):
         if instance_index is not None:
             metadata['instance_index'] = instance_index
 
-        if answer_annotations:            
+        if answer_annotations:
             # Get answer type, answer text, tokenize
             # For multi-span, remove repeating answers. Although possible, in the dataset it is mostly mistakes.
             answer_accessor, answer_texts = extract_answer_info_from_annotation(answer_annotations[0])
@@ -276,9 +284,11 @@ class DropReader(DatasetReader):
                 'passage_text_index_to_token_index': passage_text_index_to_token_index,
                 'answer_texts': answer_texts,
                 'number_occurrences_in_passage': number_occurrences_in_passage,
-                'answer_type': answer_type, # TODO: Elad - Probably temporary, used to mimic the old reader's behavior
-                'is_training': self._is_training, # TODO: Elad - Probably temporary, used to mimic the old reader's behavior
-                'old_reader_behavior': self._old_reader_behavior # TODO: Elad - temporary, used to mimic the old reader's behavior
+                'answer_type': answer_type,  # TODO: Elad - Probably temporary, used to mimic the old reader's behavior
+                'is_training': self._is_training,
+                # TODO: Elad - Probably temporary, used to mimic the old reader's behavior
+                'old_reader_behavior': self._old_reader_behavior
+                # TODO: Elad - temporary, used to mimic the old reader's behavior
             }
 
             answer_generator_names = None
@@ -299,5 +309,5 @@ class DropReader(DatasetReader):
                 return None
 
         fields['metadata'] = MetadataField(metadata)
-        
+
         return Instance(fields)
